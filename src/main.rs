@@ -18,13 +18,13 @@ fn main() {
         .collect();
     
     // let text = lines.join("") + "$";
-    let text = "ACACGTTT$";
+    let text = "ACGCGCTTCGCCTT$";
 
     let fm_index = FMIndex::new(text, 2, 1);
 
     println!("{:?}",fm_index);
 
-    fm_index.lookup("AC");
+    fm_index.lookup("CGC");
 
 }
 
@@ -43,7 +43,7 @@ fn construct_bwt(str: &str, suffix_array: &Vec<usize>) -> String{
     let str_bytes = str.as_bytes();
     let str_len = str.len();
     let bwt_bytes = suffix_array.iter()
-                 .map(|&lex_pos| str_bytes[(lex_pos + str_len - 1) % str_len])
+                 .map(|&lex_pos| str_bytes[(lex_pos + str_len - 1) % str_len]) // Add str_len so we mod +ve numbers to [0,str_len) range
                  .collect();
     return String::from_utf8(bwt_bytes).expect("not valid UTF8");
 }
@@ -53,7 +53,7 @@ fn construct_bwt(str: &str, suffix_array: &Vec<usize>) -> String{
 struct FMIndex {
     bwt: String,
     partial_suffix_array: Vec<usize>,
-    total_nuc_counts: NucStratified<(usize, usize)>,
+    first_bwt_column_index: NucStratified<usize>,
     cumlative_nuc_counts: NucStratified<Vec<usize>>,
     count_lookup_thinning_factor: usize
 }
@@ -101,11 +101,11 @@ impl FMIndex {
             partial_suffix_array,
 
             // TODO: rename and find better way of doing this
-            total_nuc_counts: NucStratified {
-                a: (1, 1 + a_count),
-                c: (1 + a_count, 1 + a_count + c_count),
-                g: (1 + a_count + c_count, 1 + a_count + c_count + g_count),
-                t: (1 + a_count + c_count + g_count, 1 + a_count + c_count + g_count + t_count) 
+            first_bwt_column_index: NucStratified {
+                a: 1,
+                c: 1 + a_count,
+                g: 1 + a_count + c_count, 
+                t: 1 + a_count + c_count + g_count,
             },
 
             cumlative_nuc_counts: NucStratified {
@@ -119,46 +119,46 @@ impl FMIndex {
     }
 
     fn lookup(&self, target_str: &str) {
-        let bottom = 0;
-        let top = self.bwt.len();
-
-        // Lookup AC
-        let first = 'C';
-
-        let &(first_index, last_index) = self.total_nuc_counts.get(first);
-
-        let new_bottom = max(bottom, first_index);
-        let new_top = min(top, last_index);
-
-        println!("new bottom: {}", new_bottom);
-        println!("new top: {}", new_top);
-
-        if new_top <= new_bottom {
-            // no matches
-        }
-
-        let second = 'A';
-
-        // Find how indexes in [new_bottom, new_top) end in A   
+        // Inclusive
+        let mut bottom = 0;
         
-        let first_rank = self.get_cumlative_count_for_index(second, new_bottom);
-        let last_rank = self.get_cumlative_count_for_index(second, new_top - 1);
+        // Exclusive
+        let mut top = self.bwt.len();
 
-        // Repeat of above - get a function
-        
-        let &(new_first_index, _) = self.total_nuc_counts.get(second);
-
-        let new_new_bottom = new_first_index + first_rank - 1;
-        let new_new_top = new_first_index + last_rank;
-
-        println!("Bottom index: {}, top index: {}", new_new_bottom, new_new_top);
-
+        // Given a top and bottom, each iteration should extend by one charecter and find new top and bottom in first column of bwt table
+        // Once no charecters left, lookup range in SA
         for nucleotide in target_str.chars().rev() {
-            // Find range of instances of nucleotide top and bottom in first column
-            // If final char -> lookup in SA.
-            // Get indexes - adjust top and bottom
-            // Find range of next char in final column - adjust top and bottom
+            if (top <= bottom) {
+                println!("NO MATCH");
+                return
+            }
+
+            let first_bwt_rank = self.get_cumlative_count_for_index(nucleotide, bottom);
+            let last_bwt_rank = self.get_cumlative_count_for_index(nucleotide, top - 1);
+
+            let first_column_bottom_index = self.first_bwt_column_index.get(nucleotide);
+
+            // Last-to-First mapping - chars of the same rank in the first and last column are the same
+
+            /*
+             * Why the max?
+             * 
+             * Note max(first_bwt_rank,1) - 1 is the same as max(first_bwt_rank - 1,0) wihtout underflow.
+             * 
+             * If `first_bwt_rank` >= 1, we have seen at least one occurence of `nucleotide` by the 
+             * `bottom`th nucleotide in the bwt. In which case we -1 to convert rank to index offset.
+             * 
+             * If `first_bwt_rank` = 0, no seen any occurences yet, so we add no index offset.
+             */ 
+            bottom = first_column_bottom_index + max(first_bwt_rank,1) - 1;
+            
+            // rank-to-offset -1 here cancelled by +1 since top is exclusive of the interval
+            top = first_column_bottom_index + last_bwt_rank;
         }
+
+        println!("MATCH INTERVAL [{},{})",bottom,top);
+
+        // TODO: Report start indecies from suffix array
         
     }
 
@@ -176,8 +176,6 @@ impl FMIndex {
         // let missing_nuc_instances = &bwt[cum_count_checkpoint_index..index].matches(nucleotide).count();
         // TODO: add in later when using cum_count lookup thinning
         let missing_nuc_instances = 0;
-
-        println!("cumlative count {} for index {}", cum_count_checkpoint + missing_nuc_instances, index); 
 
         return cum_count_checkpoint + missing_nuc_instances;
     }
