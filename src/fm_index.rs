@@ -2,14 +2,16 @@ use std::cmp::max;
 use std::fmt::Debug;
 
 use crate::nucleotide_stratified::NucStratified;
+use crate::run_length_encoding::RunLengthEncodedString;
 
 #[derive(Debug)]
 pub struct FMIndex {
-    bwt: String,
+    compressed_bwt: RunLengthEncodedString,
     partial_suffix_array: Vec<usize>,
     first_bwt_column_index: NucStratified<usize>,
     ranks: NucStratified<Vec<usize>>,
-    rank_lookup_thinning_factor: usize
+    rank_lookup_thinning_factor: usize,
+    seq_len: usize
 }
 
 impl FMIndex {
@@ -50,8 +52,10 @@ impl FMIndex {
             }
         }
 
+        let compressed_bwt = RunLengthEncodedString::new(&bwt, rank_lookup_thinning_factor);
+
         FMIndex { 
-            bwt,
+            compressed_bwt,
             partial_suffix_array,
 
             // TODO: rename and find better way of doing this
@@ -68,23 +72,24 @@ impl FMIndex {
                 g: g_rank,
                 t: t_rank
             },
-            rank_lookup_thinning_factor
+            rank_lookup_thinning_factor,
+            seq_len: str.len()
         }
     }
 
-    pub fn lookup(&self, target_str: &str) {
+    pub fn lookup(&self, target_str: &str) -> Vec<usize> {
+        println!("STARTED LOOKUP FOR {}", target_str);
         // Inclusive
         let mut bottom = 0;
         
         // Exclusive
-        let mut top = self.bwt.len();
+        let mut top = self.seq_len;
 
         // Given a top and bottom, each iteration should extend by one charecter and find new top and bottom in first column of bwt table
         // Once no charecters left, lookup range in SA
         for nucleotide in target_str.chars().rev() {
             if (top <= bottom) {
-                println!("NO MATCH");
-                return
+                return Vec::new();
             }
 
             let first_bwt_rank = self.get_rank_for_index(nucleotide, bottom);
@@ -110,26 +115,22 @@ impl FMIndex {
             top = first_column_bottom_index + last_bwt_rank;
         }
 
-        println!("MATCH INTERVAL [{},{})",bottom,top);
+        // println!("MATCH INTERVAL [{},{})",bottom,top);
 
-        println!("SUBSTRING START INDICIES {:?}", &self.partial_suffix_array[bottom..top]);
-        
+        let substr_start_indicies = self.partial_suffix_array[bottom..top].to_vec();
+        return substr_start_indicies;
+
     }
 
     // Should panic if gets wrong index
     fn get_rank_for_index(&self, nucleotide: char, index: usize) -> usize {
-        let rank_checkpoint_index = index / self.rank_lookup_thinning_factor;
+        let checkpoint_index = index / self.rank_lookup_thinning_factor;
 
         let rank_checkpoint = self.ranks.get(nucleotide)
-                                        .get(rank_checkpoint_index)
+                                        .get(checkpoint_index)
                                         .expect("coarse_rank_start_index not in range");
 
-        let bwt = &self.bwt;
-
-        // todo might be inefficient - probably better to for loop and count
-        // let missing_nuc_instances = &bwt[rank_checkpoint_index..index].matches(nucleotide).count();
-        // TODO: add in later when using rank lookup thinning
-        let missing_nuc_instances = 0;
+        let missing_nuc_instances = self.compressed_bwt.count_matches_from_checkpoint(nucleotide, checkpoint_index * self.rank_lookup_thinning_factor, index);
 
         return rank_checkpoint + missing_nuc_instances;
     }

@@ -3,18 +3,10 @@ mod nucleotide_stratified;
 mod run_length_encoding;
 
 use core::iter::Iterator;
-use core::option::Option;
-use std::collections::HashMap;
-use std::fmt::Debug;
 use std::fs::File;
 use std::io::{self, BufRead};
-use std::iter;
-use std::cmp::{max,min};
 
 use fm_index::FMIndex;
-use run_length_encoding::RunLengthEncodedString;
-
-
 
 fn main() {
     let file_path = "data/ncbi_dataset/data/GCF_000011505.1/GCF_000011505.1_ASM1150v1_genomic.fna";
@@ -30,13 +22,28 @@ fn main() {
     
     let real_text = lines.join("") + "$";
 
-    let rle = RunLengthEncodedString::new(&real_text, 128);
+    // let text = "ACGCGCTTCGCCTT$";
+    let fm_index = FMIndex::new(&real_text, 1, 128);
 
-    let text = "ACGCGCTTCGCCTT$";
+    // println!("{:?}",fm_index);
 
-    let fm_index = FMIndex::new(text, 1, 1);
+    // MATCHES RUST COUNT FOR THIS TARGET
+    // let target = "CGATTGTT";
 
-    println!("{:?}",fm_index);
+    // TODO: GETS A WRONG ANSWER WITH THIS TARGET
+    // INCLUDES 1 NON-MATCH -> BOTTOM SA INTERVAL INDEX IS TOO LOW 
+    // let target = "CCGCTTGTTGA";
 
-    fm_index.lookup("CGC");
+    // INCLUDES 2 NON-MATCHES when thinning factor = 128: 1 too high, 1 too low
+    // Includes 1 NON-MATCH when thinning factor = 1: 1 too low
+    let target = "CGATTTT";
+
+    let start_indicies = fm_index.lookup(&target);
+    println!("NUMBER OF MATCHES {}",start_indicies.len());
+    for i in start_indicies {
+        println!("INDEX: {}, ENTRY: {}",i,&real_text[i..i+target.len()]);
+    }
+
+    println!("RUST MATCH COUNT {}", real_text.match_indices(target).count());
+
 }
