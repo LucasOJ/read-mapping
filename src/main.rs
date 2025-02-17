@@ -1,3 +1,5 @@
+use core::iter::Iterator;
+use core::option::Option;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fs::File;
@@ -20,12 +22,11 @@ fn main() {
     // let text = lines.join("") + "$";
     let text = "ACGCGCTTCGCCTT$";
 
-    let fm_index = FMIndex::new(text, 2, 1);
+    let fm_index = FMIndex::new(text, 1, 1);
 
     println!("{:?}",fm_index);
 
     fm_index.lookup("CGC");
-
 }
 
 fn construct_suffix_array(str: &str) -> Vec<usize> {
@@ -34,7 +35,7 @@ fn construct_suffix_array(str: &str) -> Vec<usize> {
     // Sort suffix indices based on their corresponding suffix slices
     suffix_array.sort_by_key(|&i| &str[i..]);
     
-    println!("Suffix Array {:?}", suffix_array);
+    // println!("Suffix Array {:?}", suffix_array);
 
     return suffix_array;
 }
@@ -48,19 +49,70 @@ fn construct_bwt(str: &str, suffix_array: &Vec<usize>) -> String{
     return String::from_utf8(bwt_bytes).expect("not valid UTF8");
 }
 
+#[derive(Debug)]
+struct RunLengthEncodingEntry {
+    char: char,
+    count: usize
+}
+
+struct RLEResult {
+    sequence: Vec<RunLengthEncodingEntry>,
+    checkpoint_index: Vec<usize>
+}
+
+fn rle(str: &str, block_size: usize) -> RLEResult {
+    let mut maybe_prev_char: Option<char> = None;
+    let mut count = 0;
+    let mut rle_sequence = Vec::new();
+
+    let mut checkpoint_index: Vec<usize> = Vec::new();
+
+    for (index, char) in str.chars().enumerate() {
+        let is_block_start = index % block_size == 0;
+
+        if let Some(prev_char) = maybe_prev_char { // true on every iteration except the first
+
+            // Terminate the previous run if the charecter changes or have reached a checkpoint
+            if prev_char != char || is_block_start {
+                rle_sequence.push(RunLengthEncodingEntry { char: prev_char, count });
+                count = 0;
+            }
+        }
+
+        if is_block_start {
+            checkpoint_index.push(rle_sequence.len());
+        }
+
+        count += 1;
+        maybe_prev_char = Some(char);
+    }
+
+    // TODO: think about this - one character we haven't pushed yet?
+    // Could be the start of a k-block?
+    if let Some(prev_char) = maybe_prev_char {
+        rle_sequence.push(RunLengthEncodingEntry { char: prev_char, count });
+    }
+
+    // TODO: return RLE checkpoint index
+    return RLEResult {
+        sequence: rle_sequence,
+        checkpoint_index
+    };
+}
+
 
 #[derive(Debug)]
 struct FMIndex {
     bwt: String,
     partial_suffix_array: Vec<usize>,
     first_bwt_column_index: NucStratified<usize>,
-    cumlative_nuc_counts: NucStratified<Vec<usize>>,
-    count_lookup_thinning_factor: usize
+    ranks: NucStratified<Vec<usize>>,
+    rank_lookup_thinning_factor: usize
 }
 
 impl FMIndex {
     // Assumes sentinel terminated string
-    fn new(str: &str, suffix_array_thinning_factor: usize, count_lookup_thinning_factor: usize) -> Self {
+    fn new(str: &str, suffix_array_thinning_factor: usize, rank_lookup_thinning_factor: usize) -> Self {
         let suffix_array = construct_suffix_array(str);
         let bwt = construct_bwt(str, &suffix_array);
         let partial_suffix_array = suffix_array.into_iter()
@@ -73,10 +125,10 @@ impl FMIndex {
         let mut g_count = 0;
         let mut t_count = 0;
 
-        let mut a_cum_count = Vec::new();
-        let mut c_cum_count = Vec::new();
-        let mut g_cum_count = Vec::new();
-        let mut t_cum_count = Vec::new();
+        let mut a_rank = Vec::new();
+        let mut c_rank = Vec::new();
+        let mut g_rank = Vec::new();
+        let mut t_rank = Vec::new();
 
         for (i, nuc) in bwt.chars().enumerate() {
             match nuc {
@@ -88,11 +140,11 @@ impl FMIndex {
             }
 
             // TODO: think about sentinel char!
-            if i % count_lookup_thinning_factor == 0 {
-                a_cum_count.push(a_count);
-                c_cum_count.push(c_count);
-                g_cum_count.push(g_count);
-                t_cum_count.push(t_count);
+            if i % rank_lookup_thinning_factor == 0 {
+                a_rank.push(a_count);
+                c_rank.push(c_count);
+                g_rank.push(g_count);
+                t_rank.push(t_count);
             }
         }
 
@@ -108,13 +160,13 @@ impl FMIndex {
                 t: 1 + a_count + c_count + g_count,
             },
 
-            cumlative_nuc_counts: NucStratified {
-                a: a_cum_count,
-                c: c_cum_count,
-                g: g_cum_count,
-                t: t_cum_count
+            ranks: NucStratified {
+                a: a_rank,
+                c: c_rank,
+                g: g_rank,
+                t: t_rank
             },
-            count_lookup_thinning_factor
+            rank_lookup_thinning_factor
         }
     }
 
@@ -133,8 +185,8 @@ impl FMIndex {
                 return
             }
 
-            let first_bwt_rank = self.get_cumlative_count_for_index(nucleotide, bottom);
-            let last_bwt_rank = self.get_cumlative_count_for_index(nucleotide, top - 1);
+            let first_bwt_rank = self.get_rank_for_index(nucleotide, bottom);
+            let last_bwt_rank = self.get_rank_for_index(nucleotide, top - 1);
 
             let first_column_bottom_index = self.first_bwt_column_index.get(nucleotide);
 
@@ -158,26 +210,26 @@ impl FMIndex {
 
         println!("MATCH INTERVAL [{},{})",bottom,top);
 
-        // TODO: Report start indecies from suffix array
+        println!("SUBSTRING START INDICIES {:?}", &self.partial_suffix_array[bottom..top]);
         
     }
 
     // Should panic if gets wrong index
-    fn get_cumlative_count_for_index(&self, nucleotide: char, index: usize) -> usize {
-        let cum_count_checkpoint_index = index / self.count_lookup_thinning_factor;
+    fn get_rank_for_index(&self, nucleotide: char, index: usize) -> usize {
+        let rank_checkpoint_index = index / self.rank_lookup_thinning_factor;
 
-        let cum_count_checkpoint = self.cumlative_nuc_counts.get(nucleotide)
-                                        .get(cum_count_checkpoint_index)
-                                        .expect("coarse_cum_count_start_index not in range");
+        let rank_checkpoint = self.ranks.get(nucleotide)
+                                        .get(rank_checkpoint_index)
+                                        .expect("coarse_rank_start_index not in range");
 
         let bwt = &self.bwt;
 
         // todo might be inefficient - probably better to for loop and count
-        // let missing_nuc_instances = &bwt[cum_count_checkpoint_index..index].matches(nucleotide).count();
-        // TODO: add in later when using cum_count lookup thinning
+        // let missing_nuc_instances = &bwt[rank_checkpoint_index..index].matches(nucleotide).count();
+        // TODO: add in later when using rank lookup thinning
         let missing_nuc_instances = 0;
 
-        return cum_count_checkpoint + missing_nuc_instances;
+        return rank_checkpoint + missing_nuc_instances;
     }
 }
 
