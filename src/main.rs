@@ -21,29 +21,35 @@ fn main() {
         .collect();
     
     let real_text = lines.join("") + "$";
-
     // let text = "ACGCGCTTCGCCTT$";
+
     let fm_index = FMIndex::new(&real_text, 1, 128);
 
-    // println!("{:?}",fm_index);
-
-    // MATCHES RUST COUNT FOR THIS TARGET
-    // let target = "CGATTGTT";
-
-    // TODO: GETS A WRONG ANSWER WITH THIS TARGET
-    // INCLUDES 1 NON-MATCH -> BOTTOM SA INTERVAL INDEX IS TOO LOW 
-    // let target = "CCGCTTGTTGA";
-
-    // INCLUDES 2 NON-MATCHES when thinning factor = 128: 1 too high, 1 too low
-    // Includes 1 NON-MATCH when thinning factor = 1: 1 too low
-    let target = "CGATTTT";
+    // let target = "CGA";
+    let target = "GCAAG";
 
     let start_indicies = fm_index.lookup(&target);
+
+    // Debug
     println!("NUMBER OF MATCHES {}",start_indicies.len());
-    for i in start_indicies {
-        println!("INDEX: {}, ENTRY: {}",i,&real_text[i..i+target.len()]);
+    for (index, &sa_index) in start_indicies.iter().enumerate() {
+        
+        // DEBUG
+        let target_match = &real_text[sa_index..sa_index+target.len()];
+
+        if target_match != target {
+            println!("INDEX: {}, SA ENTRY: {}, ENTRY: {}",index,sa_index,target_match);
+        }
     }
 
-    println!("RUST MATCH COUNT {}", real_text.match_indices(target).count());
+    let mut start = 0;
+    let mut count = 0;
+    while let Some(index) = real_text[start..].find(target) {
+        let position = start + index;
+        count += 1;
+        start = position + 1;  // Move one character forward to allow overlapping matches
+    }
+
+    println!("RUST COUNT {}", count)
 
 }

@@ -7,9 +7,15 @@ struct RunLengthEncodingEntry {
 }
 
 #[derive(Debug)]
+struct RunLengthEncodingCheckpoint {
+    entry_index: usize,
+    offset: usize
+}
+
+#[derive(Debug)]
 pub struct RunLengthEncodedString {
     seq: Vec<RunLengthEncodingEntry>,
-    index_to_seq_checkpoints: Vec<usize>, 
+    index_to_seq_checkpoints: Vec<RunLengthEncodingCheckpoint>, 
     block_size: usize
 }
 
@@ -19,22 +25,25 @@ impl RunLengthEncodedString {
         let mut count = 0;
         let mut rle_sequence = Vec::new();
 
-        let mut index_to_seq_checkpoints: Vec<usize> = Vec::new();
+        let mut index_to_seq_checkpoints: Vec<RunLengthEncodingCheckpoint> = Vec::new();
 
         for (index, char) in str.chars().enumerate() {
-            let is_block_start = index % block_size == 0;
 
             if let Some(prev_char) = maybe_prev_char { // true on every iteration except the first
 
-                // Terminate the previous run if the charecter changes or have reached a checkpoint
-                if prev_char != char || is_block_start {
+                // Terminate the previous run if the character changes
+                if prev_char != char {
                     rle_sequence.push(RunLengthEncodingEntry { char: prev_char, count });
                     count = 0;
                 }
             }
 
-            if is_block_start {
-                index_to_seq_checkpoints.push(rle_sequence.len());
+            if index % block_size == 0 {
+                let checkpoint = RunLengthEncodingCheckpoint {
+                    entry_index: rle_sequence.len(),
+                    offset: count
+                };
+                index_to_seq_checkpoints.push(checkpoint);
             }
 
             count += 1;
@@ -42,7 +51,6 @@ impl RunLengthEncodedString {
         }
 
         // TODO: think about this - one character we haven't pushed yet?
-        // Could be the start of a k-block?
         if let Some(prev_char) = maybe_prev_char {
             rle_sequence.push(RunLengthEncodingEntry { char: prev_char, count });
         }
@@ -59,16 +67,36 @@ impl RunLengthEncodedString {
             panic!("Index {} is not a checkpoint for block size {}", checkpoint_index, self.block_size);
         }
 
+        if checkpoint_index == target_index {
+            return 0;
+        }
+
         let mut match_count = 0;
 
-        // Current index in the original string
-        let mut current_str_index = checkpoint_index;
+        let checkpoint = &self.index_to_seq_checkpoints[checkpoint_index / self.block_size];    
 
-        // Finds the RLE seq entry from the checkpoints array
-        let mut rle_seq_index = self.index_to_seq_checkpoints[checkpoint_index / self.block_size];
+        // First block needs special care since the checkpoint index may be somewhere in the 
+        // run - not neccessarily at the front
+        let first_rle_entry = &self.seq[checkpoint.entry_index];
 
+        if first_rle_entry.char == target_char {
+            match_count += min(
+                /*
+                 * Number of chars left in the run after the checkpoint is
+                 * first_rle_entry.count - checkpoint.offset
+                 *   
+                 * -1 since we don't want to count the first char
+                 */
+                first_rle_entry.count - checkpoint.offset - 1, 
+                target_index - checkpoint_index + 1
+            );
+        }
 
-        while current_str_index < target_index {
+        // index in the string at start of the next run
+        let mut current_str_index = checkpoint_index + first_rle_entry.count - checkpoint.offset;
+        let mut rle_seq_index = checkpoint.entry_index + 1;
+
+        while current_str_index <= target_index {
             let rle_entry = &self.seq[rle_seq_index];
 
             if rle_entry.char == target_char {
