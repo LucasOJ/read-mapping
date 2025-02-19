@@ -96,11 +96,10 @@ impl FMIndex {
                 0 => 1,
                 _ => self.get_rank_for_index(nucleotide, bottom - 1) + 1
             };
-            
             let last_bwt_rank = self.get_rank_for_index(nucleotide, top - 1);
 
             // No occourences of `nucleotide` in [bottom, top) so no matches
-            if first_bwt_rank == last_bwt_rank {
+            if first_bwt_rank > last_bwt_rank {
                 return Vec::new();
             }
 
