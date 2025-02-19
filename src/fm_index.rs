@@ -1,4 +1,3 @@
-use std::cmp::max;
 use std::fmt::Debug;
 
 use crate::nucleotide_stratified::NucStratified;
@@ -88,28 +87,29 @@ impl FMIndex {
         // Given a top and bottom, each iteration should extend by one charecter and find new top and bottom in first column of bwt table
         // Once no charecters left, lookup range in SA
         for nucleotide in target_str.chars().rev() {
-            if (top <= bottom) {
+            /*
+             * The rank of the first `nucleotide`` in the [bottom, top) range is one larger
+             * than the largest rank seen before the range.
+             * If bottom = 0, the first rank in any range would be 1.
+             */
+            let first_bwt_rank = match bottom {
+                0 => 1,
+                _ => self.get_rank_for_index(nucleotide, bottom - 1) + 1
+            };
+            
+            let last_bwt_rank = self.get_rank_for_index(nucleotide, top - 1);
+
+            // No occourences of `nucleotide` in [bottom, top) so no matches
+            if first_bwt_rank == last_bwt_rank {
                 return Vec::new();
             }
-
-            let first_bwt_rank = self.get_rank_for_index(nucleotide, bottom);
-            let last_bwt_rank = self.get_rank_for_index(nucleotide, top - 1);
 
             let first_column_bottom_index = self.first_bwt_column_index.get(nucleotide);
 
             // Last-to-First mapping - chars of the same rank in the first and last column are the same
 
-            /*
-             * Why the max?
-             * 
-             * Note max(first_bwt_rank,1) - 1 is the same as max(first_bwt_rank - 1,0) wihtout underflow.
-             * 
-             * If `first_bwt_rank` >= 1, we have seen at least one occurence of `nucleotide` by the 
-             * `bottom`th nucleotide in the bwt. In which case we -1 to convert rank to index offset.
-             * 
-             * If `first_bwt_rank` = 0, no seen any occurences yet, so we add no index offset.
-             */ 
-            bottom = first_column_bottom_index + max(first_bwt_rank,1) - 1;
+            // -1 for rank to index offset
+            bottom = first_column_bottom_index + first_bwt_rank - 1;
             
             // rank-to-offset -1 here cancelled by +1 since top is exclusive of the interval
             top = first_column_bottom_index + last_bwt_rank;
@@ -130,6 +130,7 @@ impl FMIndex {
                                         .get(checkpoint_index)
                                         .expect("coarse_rank_start_index not in range");
 
+        // TODO: Fix multipliciation in argument list
         let missing_nuc_instances = self.compressed_bwt.count_matches_from_checkpoint(nucleotide, checkpoint_index * self.rank_lookup_thinning_factor, index);
 
         return rank_checkpoint + missing_nuc_instances;
