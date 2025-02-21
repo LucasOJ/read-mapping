@@ -105,26 +105,21 @@ impl FMIndex {
              * than the largest rank seen before the range.
              * If bottom = 0, the first rank in any range would be 1.
              */
-            let first_bwt_rank = match bottom {
+            let bottom_rank = match bottom {
                 0 => 1,
                 _ => self.get_rank_for_index(nucleotide, bottom - 1) + 1
             };
-            let last_bwt_rank = self.get_rank_for_index(nucleotide, top - 1);
+            let top_rank = self.get_rank_for_index(nucleotide, top - 1);
 
             // No occourences of `nucleotide` in [bottom, top) so no matches
-            if first_bwt_rank > last_bwt_rank {
+            if bottom_rank > top_rank {
                 return Vec::new();
             }
 
-            let first_column_bottom_index = self.first_bwt_column_index.get(nucleotide);
-
-            // Last-to-First mapping - chars of the same rank in the first and last column are the same
-
-            // -1 for rank to index offset
-            bottom = first_column_bottom_index + first_bwt_rank - 1;
+            bottom = self.last_to_first_mapping(nucleotide, bottom_rank);
             
-            // rank-to-offset -1 here cancelled by +1 since top is exclusive of the interval
-            top = first_column_bottom_index + last_bwt_rank;
+            // +1 since top is exclusive of the interval
+            top = self.last_to_first_mapping(nucleotide, top_rank) + 1;
         }
 
         return (bottom..top).map(|i| self.get_suffix_array_entry(i)).collect();
@@ -188,12 +183,30 @@ impl FMIndex {
         panic!("DIDN'T FIND SA ENTRY WHEN SHOULD HAVE")
     }
 
+    /* 
+     * By construction of the BWT, charecters of the same rank in the first and last column refer to the same
+     * charecter.
+     * 
+     * To prove, imagine taking all the rows of the BW matrix ending with char C, and moving the C to the 
+     * front.
+     * Note that:
+     * 1. The strings generated are rotations of the original string, so are the set of all C-prefixed rows 
+     * in the BW Matrix
+     * 2. Appending the C does not change the relative order of these rows
+     * 3. All the rows beginning with C are contiguous so can be defined by an interval of rows (due to 
+     * the lexicographical ordering)
+     * 
+     * This means that given a char C with rank i (C_i) in the BWT, we can find the corresponding 
+     * row in the BW matrix beginning with C_i.
+     * 
+     * This function takes a char and its rank in the BWT, and returns the index of the row in the BW matrix
+     * which starts with this char
+     */
     fn last_to_first_mapping(&self, nucleotide: char, rank: usize) -> usize {
         let first_occurence_index = self.first_bwt_column_index.get(nucleotide);
 
         // -1 to convert rank to index
         return first_occurence_index + rank - 1;
-
     }
 }
 

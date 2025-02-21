@@ -7,7 +7,6 @@ use std::fs::File;
 use std::io::{self, BufRead};
 
 use fm_index::FMIndex;
-use run_length_encoding::RunLengthEncodedString;
 
 fn main() {
     let file_path = "data/ncbi_dataset/data/GCF_000011505.1/GCF_000011505.1_ASM1150v1_genomic.fna";
