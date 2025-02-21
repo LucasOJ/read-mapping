@@ -7,6 +7,7 @@ use std::fs::File;
 use std::io::{self, BufRead};
 
 use fm_index::FMIndex;
+use run_length_encoding::RunLengthEncodedString;
 
 fn main() {
     let file_path = "data/ncbi_dataset/data/GCF_000011505.1/GCF_000011505.1_ASM1150v1_genomic.fna";
@@ -21,12 +22,11 @@ fn main() {
         .collect();
     
     let real_text = lines.join("") + "$";
-    // let text = "ACGCGCTTCGCCTT$";
+    // let real_text = "ACGCGCTTCGCCTT$";
 
-    let fm_index = FMIndex::new(&real_text, 1, 128);
+    let fm_index = FMIndex::new(&real_text, 64, 128);
 
-    // let target = "CGA";
-    let target = "GCAAG";
+    let target = "CGA";
 
     let start_indicies = fm_index.lookup(&target);
 

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Debug;
 
 use crate::nucleotide_stratified::NucStratified;
@@ -6,21 +7,32 @@ use crate::run_length_encoding::RunLengthEncodedString;
 #[derive(Debug)]
 pub struct FMIndex {
     compressed_bwt: RunLengthEncodedString,
-    partial_suffix_array: Vec<usize>,
+    partial_suffix_array: HashMap<usize, usize>,
     first_bwt_column_index: NucStratified<usize>,
     ranks: NucStratified<Vec<usize>>,
-    rank_lookup_thinning_factor: usize,
+    rank_sampling_step_size: usize,
+    suffix_array_sampling_step_size: usize,
     seq_len: usize
 }
 
 impl FMIndex {
     // Assumes sentinel terminated string
-    pub fn new(str: &str, suffix_array_thinning_factor: usize, rank_lookup_thinning_factor: usize) -> Self {
+    pub fn new(str: &str, suffix_array_sampling_step_size: usize, rank_sampling_step_size: usize) -> Self {
         let suffix_array = construct_suffix_array(str);
         let bwt = construct_bwt(str, &suffix_array);
+
+        /*
+         * To ensure O(1) lookup of the SA entries which have not been sampled, sample every 
+         * `suffix_array_sampling_step_size`th entry by value.
+         * 
+         * In `get_suffix_array_entry` we traverse back one suffix at a time, so using this 
+         * hashmap we will find a sampled SA entry in at most `suffix_array_sampling_step_size`
+         * steps.
+         */
         let partial_suffix_array = suffix_array.into_iter()
-            .step_by(suffix_array_thinning_factor)
-            .collect();
+            .enumerate()
+            .filter(|(_, entry)| entry % suffix_array_sampling_step_size == 0)
+            .collect(); // Maps index in original SA to entry in SA
 
         // TODO better way than this?
         let mut a_count = 0;
@@ -43,7 +55,7 @@ impl FMIndex {
             }
 
             // TODO: think about sentinel char!
-            if i % rank_lookup_thinning_factor == 0 {
+            if i % rank_sampling_step_size == 0 {
                 a_rank.push(a_count);
                 c_rank.push(c_count);
                 g_rank.push(g_count);
@@ -51,7 +63,7 @@ impl FMIndex {
             }
         }
 
-        let compressed_bwt = RunLengthEncodedString::new(&bwt, rank_lookup_thinning_factor);
+        let compressed_bwt = RunLengthEncodedString::new(&bwt, rank_sampling_step_size);
 
         FMIndex { 
             compressed_bwt,
@@ -71,7 +83,8 @@ impl FMIndex {
                 g: g_rank,
                 t: t_rank
             },
-            rank_lookup_thinning_factor,
+            rank_sampling_step_size,
+            suffix_array_sampling_step_size,
             seq_len: str.len()
         }
     }
@@ -114,25 +127,73 @@ impl FMIndex {
             top = first_column_bottom_index + last_bwt_rank;
         }
 
-        // println!("MATCH INTERVAL [{},{})",bottom,top);
-
-        let substr_start_indicies = self.partial_suffix_array[bottom..top].to_vec();
-        return substr_start_indicies;
+        return (bottom..top).map(|i| self.get_suffix_array_entry(i)).collect();
 
     }
 
     // Should panic if gets wrong index
     fn get_rank_for_index(&self, nucleotide: char, index: usize) -> usize {
-        let checkpoint_index = index / self.rank_lookup_thinning_factor;
+        let checkpoint_index = index / self.rank_sampling_step_size;
 
         let rank_checkpoint = self.ranks.get(nucleotide)
                                         .get(checkpoint_index)
                                         .expect("coarse_rank_start_index not in range");
 
         // TODO: Fix multipliciation in argument list
-        let missing_nuc_instances = self.compressed_bwt.count_matches_from_checkpoint(nucleotide, checkpoint_index * self.rank_lookup_thinning_factor, index);
+        let missing_nuc_instances = self.compressed_bwt.count_matches_from_checkpoint(nucleotide, checkpoint_index * self.rank_sampling_step_size, index);
 
         return rank_checkpoint + missing_nuc_instances;
+    }
+
+    fn get_suffix_array_entry(&self, target_index: usize) -> usize {
+        let mut current_index = target_index;
+
+        /*
+         * General idea is to `walk back` through the string by repeatedly applying the LF mapping until we
+         * find a suffix with a sampled SA entry.
+         * 
+         * `self.partial_suffix_array` samples the SA every `suffix_array_sampling_step_size` entries
+         * by entry index - not the index of the suffix in the original string! This ensures that it takes
+         * at most `suffix_array_sampling_step_size` steps to find a sampled SA entry.
+         */
+        for steps in 0..self.suffix_array_sampling_step_size {
+            /*
+             * Case 1: Hit a sampled SA entry.
+             * 
+             * Note:
+             * 1. The SA maps each char in the BWT to its position in the original string (by construction)
+             * 2. In each step we walk back one char in the original string following the LF mapping
+             * 
+             * so the original index of the suffix [target_index:] is
+             * sampled entry + the numbers of chars we walked back.
+             */ 
+            if let Some(suffix_array_entry) = self.partial_suffix_array.get(&current_index) {
+                return suffix_array_entry + steps;
+            }
+
+            /*
+             * Case 2: Current entry not sampled in SA array.
+             * 
+             * 1. Lookup the charecter preceding the current suffix in the original string.
+             * This is just the char at index `current_index` in the BWT (by construction).
+             * 
+             * 2. Find the index of the row in the BW matrix that starts with the preceding
+             * charecter we just found using the LF mapping
+             */
+            let nucleotide = self.compressed_bwt.get_char_from_position(current_index);
+            let rank = self.get_rank_for_index(nucleotide, current_index);
+
+            current_index = self.last_to_first_mapping(nucleotide, rank);
+        }
+        panic!("DIDN'T FIND SA ENTRY WHEN SHOULD HAVE")
+    }
+
+    fn last_to_first_mapping(&self, nucleotide: char, rank: usize) -> usize {
+        let first_occurence_index = self.first_bwt_column_index.get(nucleotide);
+
+        // -1 to convert rank to index
+        return first_occurence_index + rank - 1;
+
     }
 }
 
@@ -142,8 +203,6 @@ fn construct_suffix_array(str: &str) -> Vec<usize> {
     // Sort suffix indices based on their corresponding suffix slices
     suffix_array.sort_by_key(|&i| &str[i..]);
     
-    // println!("Suffix Array {:?}", suffix_array);
-
     return suffix_array;
 }
 

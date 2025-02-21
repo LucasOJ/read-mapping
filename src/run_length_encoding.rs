@@ -137,4 +137,36 @@ impl RunLengthEncodedString {
 
         return match_count;
     }
+
+    pub fn get_char_from_position(&self, target_index: usize) -> char {
+        let checkpoint_index = target_index / self.block_size;
+        let checkpoint = &self.index_to_seq_checkpoints[checkpoint_index];
+
+        let mut current_entry_index = checkpoint.entry_index;
+
+        /*
+         * Starting index of the run the checkpoint points to
+         * 
+         * Take following sequence with block size 3:
+         * 0 1 2 3 4 5
+         * C C G G T T
+         * ^ 1st checkpoint
+         *       ^ 2nd checkpoint has entry index 1, offset 1
+         * checkpoint_index * self.block_size - checkpoint.offset = 1 * 3 - 1 = 2 for the 
+         * index where the run starts
+         */ 
+        let mut current_index = checkpoint_index * self.block_size - checkpoint.offset;
+
+        // Scan along the RLE one run at a time
+        loop {
+            let entry = &self.seq[current_entry_index];
+            current_index += entry.count;
+
+            if current_index > target_index {
+                return entry.char
+            }
+
+            current_entry_index += 1;
+        }
+    }
 }
