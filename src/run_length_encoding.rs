@@ -62,6 +62,7 @@ impl RunLengthEncodedString {
         };
     }
 
+    // Returns the number of matches in the RLE encoded string in the interval (checkpoint_index, target_index]
     pub fn count_matches_from_checkpoint(&self, target_char: char, checkpoint_index: usize, target_index: usize) -> usize {        
         if checkpoint_index % self.block_size != 0 {
             panic!("Index {} is not a checkpoint for block size {}", checkpoint_index, self.block_size);
@@ -79,21 +80,38 @@ impl RunLengthEncodedString {
         // run - not neccessarily at the front
         let first_rle_entry = &self.seq[checkpoint.entry_index];
 
+        let following_entry_start_index = checkpoint_index + first_rle_entry.count - checkpoint.offset;
+
         if first_rle_entry.char == target_char {
-            match_count += min(
+            if target_index >= following_entry_start_index {
                 /*
+                 * Case 1: `target_index` is not in the first run
+                 * 
                  * Number of chars left in the run after the checkpoint is
                  * first_rle_entry.count - checkpoint.offset
                  *   
-                 * -1 since we don't want to count the first char
+                 * -1 since we don't want to count the first char (counted by 
+                 * partial rank lookup already)
                  */
-                first_rle_entry.count - checkpoint.offset - 1, 
-                target_index - checkpoint_index + 1
-            );
+                match_count += first_rle_entry.count - checkpoint.offset - 1
+            } else {
+                /*
+                 * Case 2: `target_index` is in the first run
+                 *     
+                 * 012 345678
+                 * AAA|AAAAAA
+                 *         ^ target_index
+                 *     ^ checkpoint_index
+                 * Say we have run of 8 As with offset of 3 with `target_index` index 7.
+                 * There are target_index - checkpoint_index = 7 - 3 = 4 As in 
+                 * str(checkpoint_index, target_index]
+                 */
+                match_count += target_index - checkpoint_index
+            }
         }
 
         // index in the string at start of the next run
-        let mut current_str_index = checkpoint_index + first_rle_entry.count - checkpoint.offset;
+        let mut current_str_index = following_entry_start_index;
         let mut rle_seq_index = checkpoint.entry_index + 1;
 
         while current_str_index <= target_index {
