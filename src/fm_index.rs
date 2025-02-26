@@ -7,7 +7,7 @@ use crate::run_length_encoding::RunLengthEncodedString;
 #[derive(Debug)]
 pub struct FMIndex {
     compressed_bwt: RunLengthEncodedString,
-    partial_suffix_array: HashMap<usize, usize>,
+    sampled_suffix_array: HashMap<usize, usize>,
     first_bwt_column_index: NucStratified<usize>,
     ranks: NucStratified<Vec<usize>>,
     rank_sampling_step_size: usize,
@@ -16,73 +16,50 @@ pub struct FMIndex {
 }
 
 impl FMIndex {
-    // Assumes sentinel terminated string
+    // Assumes sentinel terminated string `str`
     pub fn new(str: &str, suffix_array_sampling_step_size: usize, rank_sampling_step_size: usize) -> Self {
         let suffix_array = construct_suffix_array(str);
+
         let bwt = construct_bwt(str, &suffix_array);
+        let compressed_bwt = RunLengthEncodedString::new(&bwt, rank_sampling_step_size);
 
         /*
-         * To ensure O(1) lookup of the SA entries which have not been sampled, sample every 
-         * `suffix_array_sampling_step_size`th entry by value.
-         * 
-         * In `get_suffix_array_entry` we traverse back one suffix at a time, so using this 
-         * hashmap we will find a sampled SA entry in at most `suffix_array_sampling_step_size`
-         * steps.
+         * Constructing the BWT requires the full suffix array
+         * Since 'sample_suffix_array' takes ownership of the suffix array we can only take a sample 
+         * after the BWT has been contructed
          */
-        let partial_suffix_array = suffix_array.into_iter()
-            .enumerate()
-            .filter(|(_, entry)| entry % suffix_array_sampling_step_size == 0)
-            .collect(); // Maps index in original SA to entry in SA
+        let sampled_suffix_array = sample_suffix_array(suffix_array, suffix_array_sampling_step_size);
 
-        // TODO better way than this?
-        let mut a_count = 0;
-        let mut c_count = 0;
-        let mut g_count = 0;
-        let mut t_count = 0;
-
-        let mut a_rank = Vec::new();
-        let mut c_rank = Vec::new();
-        let mut g_rank = Vec::new();
-        let mut t_rank = Vec::new();
+        let mut counts: NucStratified<usize> = NucStratified::default();
+        let mut ranks: NucStratified<Vec<usize>> = NucStratified::default();
 
         for (i, nuc) in bwt.chars().enumerate() {
-            match nuc {
-                'A' => a_count += 1,
-                'C' => c_count += 1,
-                'G' => g_count += 1,
-                'T' => t_count += 1,
-                x => println!("Got a {}", x)
+            if nuc != '$' {
+                // += operator does not do automatic dereferencing so have to do it ourselves
+                *counts.get_mut(nuc) += 1;
             }
 
-            // TODO: think about sentinel char!
             if i % rank_sampling_step_size == 0 {
-                a_rank.push(a_count);
-                c_rank.push(c_count);
-                g_rank.push(g_count);
-                t_rank.push(t_count);
+                for nuc_key in ['A','C','G','T'] {
+                    let current_nuc_count = *counts.get(nuc_key);
+                    ranks.get_mut(nuc_key).push(current_nuc_count);
+                }
             }
         }
 
-        let compressed_bwt = RunLengthEncodedString::new(&bwt, rank_sampling_step_size);
+        /* 
+         * Stores the index at which each run begins in the first column of the BWT matrix
+         * 
+         * Note we're using the final nuc counts from the BWT rather than the original string,
+         * but the overall counts will match since the BWT is a permutation of the original string
+         */
+        let first_bwt_column_index = get_first_bwt_column_index(&counts);
 
         FMIndex { 
             compressed_bwt,
-            partial_suffix_array,
-
-            // TODO: rename and find better way of doing this
-            first_bwt_column_index: NucStratified {
-                a: 1,
-                c: 1 + a_count,
-                g: 1 + a_count + c_count, 
-                t: 1 + a_count + c_count + g_count,
-            },
-
-            ranks: NucStratified {
-                a: a_rank,
-                c: c_rank,
-                g: g_rank,
-                t: t_rank
-            },
+            sampled_suffix_array,
+            first_bwt_column_index,
+            ranks,
             rank_sampling_step_size,
             suffix_array_sampling_step_size,
             seq_len: str.len()
@@ -147,7 +124,7 @@ impl FMIndex {
          * General idea is to `walk back` through the string by repeatedly applying the LF mapping until we
          * find a suffix with a sampled SA entry.
          * 
-         * `self.partial_suffix_array` samples the SA every `suffix_array_sampling_step_size` entries
+         * `self.sampled_suffix_array` samples the SA every `suffix_array_sampling_step_size` entries
          * by entry index - not the index of the suffix in the original string! This ensures that it takes
          * at most `suffix_array_sampling_step_size` steps to find a sampled SA entry.
          */
@@ -162,7 +139,7 @@ impl FMIndex {
              * so the original index of the suffix [target_index:] is
              * sampled entry + the numbers of chars we walked back.
              */ 
-            if let Some(suffix_array_entry) = self.partial_suffix_array.get(&current_index) {
+            if let Some(suffix_array_entry) = self.sampled_suffix_array.get(&current_index) {
                 return suffix_array_entry + steps;
             }
 
@@ -219,6 +196,22 @@ fn construct_suffix_array(str: &str) -> Vec<usize> {
     return suffix_array;
 }
 
+// Note: This function takes ownership of the suffix_array since the sampled structure should have ownership of all the elements
+fn sample_suffix_array(suffix_array: Vec<usize>, suffix_array_sampling_step_size: usize) -> HashMap<usize, usize> {
+    /*
+     * To ensure O(1) lookup of the SA entries which have not been sampled, sample every 
+     * `suffix_array_sampling_step_size`th entry by value.
+     * 
+     * In `get_suffix_array_entry` we traverse back one suffix at a time in their lexicographical ordering, 
+     * so using this hashmap we will find a sampled SA entry in at most `suffix_array_sampling_step_size`
+     * steps.
+     */
+    return suffix_array.into_iter()
+        .enumerate()
+        .filter(|(_, entry)| entry % suffix_array_sampling_step_size == 0)
+        .collect(); // Maps index in original SA to entry in SA
+}
+
 fn construct_bwt(str: &str, suffix_array: &Vec<usize>) -> String{
     let str_bytes = str.as_bytes();
     let str_len = str.len();
@@ -226,4 +219,15 @@ fn construct_bwt(str: &str, suffix_array: &Vec<usize>) -> String{
                  .map(|&lex_pos| str_bytes[(lex_pos + str_len - 1) % str_len]) // Add str_len so we mod +ve numbers to [0,str_len) range
                  .collect();
     return String::from_utf8(bwt_bytes).expect("not valid UTF8");
+}
+
+fn get_first_bwt_column_index(nuc_counts: &NucStratified<usize>) -> NucStratified<usize> {
+    return NucStratified {
+        // Since $ is less than all other chars the run of A's starts from position 1 
+        a: 1,
+        c: 1 + nuc_counts.get('A'),
+        g: 1 + nuc_counts.get('A') + nuc_counts.get('C'), 
+        t: 1 + nuc_counts.get('A') + nuc_counts.get('C') + nuc_counts.get('G'),
+    };
+
 }

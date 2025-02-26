@@ -1,13 +1,12 @@
 use std::fmt::Debug;
 
-// TODO: Should handle all nucleotide switching but still some manual in FMIndex
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct NucStratified<T: Debug> {
     pub a: T,
     pub c: T,
     pub g: T,
     pub t: T
-} 
+}
 
 impl<T: Debug> NucStratified<T> {
     pub fn get(&self, nucleotide: char) -> &T {
@@ -16,6 +15,16 @@ impl<T: Debug> NucStratified<T> {
             'C' => &self.c,
             'G' => &self.g,
             'T' => &self.t,
+             _  => panic!("NOT A NUCLEOTIDE!") 
+        }
+    }
+
+    pub fn get_mut(&mut self, nucleotide: char) -> &mut T {
+        match nucleotide {
+            'A' => &mut self.a,
+            'C' => &mut self.c,
+            'G' => &mut self.g,
+            'T' => &mut self.t,
              _  => panic!("NOT A NUCLEOTIDE!") 
         }
     }
