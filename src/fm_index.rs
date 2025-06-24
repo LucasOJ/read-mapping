@@ -4,6 +4,8 @@ use std::fmt::Debug;
 use crate::nucleotide_stratified::NucStratified;
 use crate::run_length_encoding::RunLengthEncodedString;
 
+type SuffixArrayIndex = usize;
+
 #[derive(Debug)]
 pub struct FMIndex {
     compressed_bwt: RunLengthEncodedString,
@@ -66,8 +68,7 @@ impl FMIndex {
         }
     }
 
-    pub fn lookup(&self, target_str: &str) -> Vec<usize> {
-        println!("STARTED LOOKUP FOR {}", target_str);
+    pub fn lookup(&self, target_str: &str) -> impl Iterator<Item = SuffixArrayIndex> {
         // Inclusive
         let mut bottom = 0;
         
@@ -90,7 +91,7 @@ impl FMIndex {
 
             // No occourences of `nucleotide` in [bottom, top) so no matches
             if bottom_rank > top_rank {
-                return Vec::new();
+                return 0..0; // Empty range
             }
 
             bottom = self.last_to_first_mapping(nucleotide, bottom_rank);
@@ -99,7 +100,7 @@ impl FMIndex {
             top = self.last_to_first_mapping(nucleotide, top_rank) + 1;
         }
 
-        return (bottom..top).map(|i| self.get_suffix_array_entry(i)).collect();
+        return bottom..top;
 
     }
 
@@ -117,7 +118,7 @@ impl FMIndex {
         return rank_checkpoint + missing_nuc_instances;
     }
 
-    fn get_suffix_array_entry(&self, target_index: usize) -> usize {
+    pub fn get_genome_position(&self, target_index: SuffixArrayIndex) -> usize {
         let mut current_index = target_index;
 
         /*
@@ -158,6 +159,29 @@ impl FMIndex {
             current_index = self.last_to_first_mapping(nucleotide, rank);
         }
         panic!("DIDN'T FIND SA ENTRY WHEN SHOULD HAVE")
+    }
+
+    // Match index is the row of the bwt where the match begins
+    pub fn count_extension_matches(&self, match_index: SuffixArrayIndex, extension: &str) -> usize {
+
+        let mut current_index = match_index;
+
+        for (match_count, read_nuc) in extension.chars().enumerate() {
+
+            // Read the previous character in the string
+            let nucleotide = self.compressed_bwt.get_char_from_position(current_index);
+
+            if nucleotide != read_nuc {
+                return match_count;
+            }
+
+            // Find the BWT row assoicated with the preceding character
+            let rank = self.get_rank_for_index(nucleotide, current_index);
+            current_index = self.last_to_first_mapping(nucleotide, rank); 
+        }
+        
+        // Matched whole extension
+        return extension.len();
     }
 
     /* 
@@ -202,7 +226,7 @@ fn sample_suffix_array(suffix_array: Vec<usize>, suffix_array_sampling_step_size
      * To ensure O(1) lookup of the SA entries which have not been sampled, sample every 
      * `suffix_array_sampling_step_size`th entry by value.
      * 
-     * In `get_suffix_array_entry` we traverse back one suffix at a time in their lexicographical ordering, 
+     * In `get_genome_position` we traverse back one suffix at a time in their lexicographical ordering, 
      * so using this hashmap we will find a sampled SA entry in at most `suffix_array_sampling_step_size`
      * steps.
      */
@@ -215,8 +239,25 @@ fn sample_suffix_array(suffix_array: Vec<usize>, suffix_array_sampling_step_size
 fn construct_bwt(str: &str, suffix_array: &Vec<usize>) -> String{
     let str_bytes = str.as_bytes();
     let str_len = str.len();
+    /*
+     * The lexicographical ordering of suffixes given by the suffix array yeilds the BWT matrix
+     * To the the BWT itself, we just take the charecter in the final column for each row.
+     * This is the character before the start of each suffix in the original string by the cyclic 
+     * nature of the permuations making up the rows in the BWT matrix.
+     * 
+     * For example, "GCCAT$" yields:
+     * SA BWT Matrix 
+     * 5  $|G C C A [T]
+     * 3  A T $|G C [C]
+     * 2  C A T $|G [C]
+     * 1  C C A T $|[G]
+     * 0  G C C A T [$]
+     * 4  T $|G C C [A]
+     * 
+     */
     let bwt_bytes = suffix_array.iter()
-                 .map(|&lex_pos| str_bytes[(lex_pos + str_len - 1) % str_len]) // Add str_len so we mod +ve numbers to [0,str_len) range
+                 // Add str_len to (lex_pos - 1) since without it we underflow when lex_pos = 0
+                 .map(|&lex_pos| str_bytes[(lex_pos + str_len - 1) % str_len]) 
                  .collect();
     return String::from_utf8(bwt_bytes).expect("not valid UTF8");
 }
@@ -230,4 +271,61 @@ fn get_first_bwt_column_index(nuc_counts: &NucStratified<usize>) -> NucStratifie
         t: 1 + nuc_counts.get('A') + nuc_counts.get('C') + nuc_counts.get('G'),
     };
 
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookup() {
+        let fm_index = FMIndex::new("ACGCGCTTCGCCTT$", 3, 4);
+        assert!(fm_index.lookup("ATG").eq(0..0));
+        assert!(fm_index.lookup("C").eq(2..8));
+        assert!(fm_index.lookup("CGC").eq(3..6));
+    } 
+
+    #[test]
+    fn count_extension_matches() {
+        let fm_index = FMIndex::new("ACGCGCTTCGCCTT$", 3, 4);
+        // Partial match against chars preceding CCTT$
+        assert_eq!(fm_index.count_extension_matches(2, "GCTAAA"), 3);
+
+        assert_eq!(fm_index.count_extension_matches(7, ""), 0);
+
+        // Full match against chars preceding GCTTCGCCTT$
+        assert_eq!(fm_index.count_extension_matches(10, "CGCA"), 4);
+
+    }
+
+    #[test]
+    fn get_genome_position() {
+        /*
+         * Suffix array for ACGCGCTTCGCCTT$:
+         *  0 14: $
+         *  1  0: ACGCGCTTCGCCTT$
+         *  2 10: CCTT$
+         *  3  8: CGCCTT$
+         *  4  1: CGCGCTTCGCCTT$
+         *  5  3: CGCTTCGCCTT$
+         *  6 11: CTT$
+         *  7  5: CTTCGCCTT$
+         *  8  9: GCCTT$
+         *  9  2: GCGCTTCGCCTT$
+         * 10  4: GCTTCGCCTT$
+         * 11 13: T$
+         * 12  7: TCGCCTT$
+         * 13 12: TT$
+         * 14  6: TTCGCCTT$
+         */
+        let fm_index = FMIndex::new("ACGCGCTTCGCCTT$", 3, 4);
+        
+        let actual_sa_values: Vec<_> = (0..15).map(|i| fm_index.get_genome_position(i))
+            .collect(); 
+
+        let expected_sa_values: Vec<usize> = Vec::from([14, 0, 10, 8, 1, 3, 11, 5, 9, 2, 4, 13, 7, 12, 6]);
+
+        assert_eq!(actual_sa_values, expected_sa_values);
+    }
 }
