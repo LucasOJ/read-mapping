@@ -10,7 +10,8 @@ pub fn read_fastq(file_path: &str) -> impl Iterator<Item = String> {
         .lines() // Get an iterator over lines
         .filter_map(Result::ok) // Ignore any errors
         .skip(1)
-        .step_by(4);
+        .step_by(4)
+        .filter(|line| line.chars().all(|c| matches!(c, 'A' | 'T' | 'C' | 'G')));
 
     return reads;
 }
