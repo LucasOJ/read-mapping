@@ -15,7 +15,7 @@ impl<T: Debug> NucStratified<T> {
             'C' => &self.c,
             'G' => &self.g,
             'T' => &self.t,
-             _  => panic!("NOT A NUCLEOTIDE!") 
+             _  => panic!("{nucleotide} IS NOT A NUCLEOTIDE!") 
         }
     }
 
@@ -25,7 +25,7 @@ impl<T: Debug> NucStratified<T> {
             'C' => &mut self.c,
             'G' => &mut self.g,
             'T' => &mut self.t,
-             _  => panic!("NOT A NUCLEOTIDE!") 
+             _  => panic!("{nucleotide} IS NOT A NUCLEOTIDE!") 
         }
     }
 }
