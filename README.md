@@ -18,7 +18,7 @@ On my Intel i5-6200U laptop, I have benchmarked ~36 million reads / hour matchin
 // Construct ReadMappingIndex
 let read_mapping_index = ReadMappingIndex::new(&genome);
 
-// Map a read to the genome using up to 3 reads of seed size 25 
+// Map a read to the genome using up to 3 seeds of size 25 
 let read_map_result = read_mapping_index.map_read(&read, 25, 3); 
 
 // Save index to file
