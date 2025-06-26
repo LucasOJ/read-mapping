@@ -1,7 +1,12 @@
+use bincode::decode_from_std_read;
+use bincode::{Encode, Decode,config::standard, encode_into_std_write, error::EncodeError};
+
 use std::{cmp::min, collections::HashMap};
+use std::fs::File;
 
 use crate::fm_index::FMIndex;
 
+#[derive(Encode, Decode)]
 pub struct ReadMapper {
     forwards_fm_index: FMIndex,
     reverse_fm_index: FMIndex,
@@ -29,12 +34,14 @@ impl ReadMapper {
         };
     }
 
-    pub fn to_file(self, filename: &str) {
-        todo!()
+    pub fn to_file(&self, filename: &str) -> Result<usize, EncodeError> {
+        let mut file = File::create(filename).unwrap();
+        encode_into_std_write(self, &mut file, standard())
     }
 
-    pub fn from_file(self, filename: &str) {
-        todo!()
+    pub fn from_file(filename: &str) -> Self {
+        let mut file = File::open(filename).unwrap();
+        decode_from_std_read(&mut file, standard()).unwrap()
     }
 
     // TODO: Return type should include seed number (and location?)

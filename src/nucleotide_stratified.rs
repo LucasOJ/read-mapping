@@ -1,6 +1,8 @@
+use bincode::{Encode, Decode};
+
 use std::fmt::Debug;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Encode, Decode)]
 pub struct NucStratified<T: Debug> {
     pub a: T,
     pub c: T,

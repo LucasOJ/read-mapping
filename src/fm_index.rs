@@ -1,14 +1,15 @@
+use bincode::{Encode, Decode};
+use suffix_array::SuffixArray;
+
 use std::collections::HashMap;
 use std::fmt::Debug;
-
-use suffix_array::SuffixArray;
 
 use crate::nucleotide_stratified::NucStratified;
 use crate::run_length_encoding::RunLengthEncodedString;
 
 type SuffixArrayIndex = usize;
 
-#[derive(Debug)]
+#[derive(Debug, Encode, Decode)]
 pub struct FMIndex {
     compressed_bwt: RunLengthEncodedString,
     sampled_suffix_array: HashMap<usize, usize>,

@@ -1,18 +1,19 @@
+use bincode::{Encode, Decode};
 use std::cmp::min;
 
-#[derive(Debug)]
+#[derive(Debug, Encode, Decode)]
 struct RunLengthEncodingEntry {
     char: char,
     count: usize
 }
 
-#[derive(Debug)]
+#[derive(Debug, Encode, Decode)]
 struct RunLengthEncodingCheckpoint {
     entry_index: usize,
     offset: usize
 }
 
-#[derive(Debug)]
+#[derive(Debug, Encode, Decode)]
 pub struct RunLengthEncodedString {
     seq: Vec<RunLengthEncodingEntry>,
     index_to_seq_checkpoints: Vec<RunLengthEncodingCheckpoint>, 
