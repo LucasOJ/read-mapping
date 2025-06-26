@@ -1,54 +1,52 @@
+mod fasta_parsing;
+mod fastq_parsing;
 mod fm_index;
 mod nucleotide_stratified;
+mod read_mapping;
 mod run_length_encoding;
 
 use core::iter::Iterator;
-use std::fs::File;
-use std::io::{self, BufRead};
+use std::env;
 
-use fm_index::FMIndex;
+use fasta_parsing::read_fasta;
+use fastq_parsing::read_fastq;
+
+use read_mapping::{MapReadResult, ReadMapper};
 
 fn main() {
-    let file_path = "data/ncbi_dataset/data/GCF_000011505.1/GCF_000011505.1_ASM1150v1_genomic.fna";
-    
-    let file = File::open(file_path).expect("open file failed"); // Open the file
-    let reader = io::BufReader::new(file);
+    env::set_var("RUST_BACKTRACE", "1");
 
-    let lines: Vec<String> = reader
-        .lines() // Get an iterator over lines
-        .skip(1) // Skip the first line
-        .filter_map(Result::ok) // Ignore any errors
-        .collect();
-    
-    let real_text = lines.join("") + "$";
-    // let real_text = "ACGCGCTTCGCCTT$";
+    let genome =
+        read_fasta("data/ncbi_dataset/data/GCF_000011505.1/GCF_000011505.1_ASM1150v1_genomic.fna");
 
-    let fm_index = FMIndex::new(&real_text, 64, 128);
+    let read_mapper = ReadMapper::new(&genome);
 
-    let target = "CGA";
+    // read_mapper.to_file("MRSAIndex.bin");
+    // let read_mapper = ReadMapper::from_file("MRSAIndex.bin");
 
-    let start_indicies = fm_index.lookup(&target);
+    println!("Mapping Reads");
 
-    // Debug
-    println!("NUMBER OF MATCHES {}",start_indicies.len());
-    for (index, &sa_index) in start_indicies.iter().enumerate() {
-        
-        // DEBUG
-        let target_match = &real_text[sa_index..sa_index+target.len()];
+    let num_of_reads = 10000;
 
-        if target_match != target {
-            println!("INDEX: {}, SA ENTRY: {}, ENTRY: {}",index,sa_index,target_match);
+    let reads = read_fastq("data/SRR11998244.fastq");
+
+    let read_results = reads
+        .take(num_of_reads)
+        .map(|read| read_mapper.map_read(&read, 25, 3));
+
+    let mut seed_attempt_map = [0, 0, 0];
+    for read_result in read_results {
+        if let Some(MapReadResult { seed_attempt, .. }) = read_result {
+            seed_attempt_map[seed_attempt] += 1;
         }
     }
 
-    let mut start = 0;
-    let mut count = 0;
-    while let Some(index) = real_text[start..].find(target) {
-        let position = start + index;
-        count += 1;
-        start = position + 1;  // Move one character forward to allow overlapping matches
+    let successful_maps_count: usize = seed_attempt_map.iter().sum();
+
+    for (seed_attempt, &attempt_count) in seed_attempt_map.iter().enumerate() {
+        let percentage = f64::round(100.0 * attempt_count as f64 / successful_maps_count as f64);
+        println!("Seed attempt {seed_attempt} - {attempt_count} ({percentage}%)");
     }
 
-    println!("RUST COUNT {}", count)
-
+    println!("{successful_maps_count} reads successfully mapped out of {num_of_reads} reads");
 }

@@ -1,10 +1,17 @@
 use bincode::decode_from_std_read;
-use bincode::{Encode, Decode,config::standard, encode_into_std_write, error::EncodeError};
+use bincode::{config::standard, encode_into_std_write, error::EncodeError, Decode, Encode};
 
-use std::{cmp::min, collections::HashMap};
 use std::fs::File;
+use std::{cmp::min, collections::HashMap};
 
 use crate::fm_index::FMIndex;
+
+#[derive(Debug, PartialEq)]
+pub struct MapReadResult {
+    pub genome_position: usize,
+    pub match_length: usize,
+    pub seed_attempt: usize,
+}
 
 #[derive(Encode, Decode)]
 pub struct ReadMapper {
@@ -15,7 +22,6 @@ pub struct ReadMapper {
 
 impl ReadMapper {
     pub fn new(genome: &str) -> Self {
-
         // TODO: Not nice having to reallocate `str` just to add the sentinel
         let mut forwards_genome = String::from(genome);
         forwards_genome.push('$');
@@ -44,23 +50,22 @@ impl ReadMapper {
         decode_from_std_read(&mut file, standard()).unwrap()
     }
 
-    // TODO: Return type should include seed number (and location?)
     pub fn map_read(
         &self,
         read: &str,
         seed_length: usize,
         max_seeds: usize,
-    ) -> Option<(usize, usize)> {
+    ) -> Option<MapReadResult> {
         assert!(read.len() >= seed_length);
         let reversed_read: String = read.chars().rev().collect();
 
-        for i in 0..min(read.len() / seed_length, max_seeds) {
+        for seed_attempt in 0..min(read.len() / seed_length, max_seeds) {
             /*
              * Seed bounds in the forward direction
              * We start by choosing seeds from the beginning of the reads since
              * reads are typically more accurate at the beginning
              */
-            let seed_start_index = i * seed_length;
+            let seed_start_index = seed_attempt * seed_length;
             let seed_end_index = seed_start_index + seed_length;
 
             // Corresponding bounds for the same seed in the reverse direction
@@ -112,9 +117,9 @@ impl ReadMapper {
             /*
              * Only consider forwards_fm_index if we have something to gain.
              * Note that the forwards_extension_length can be at most the seed_length,
-             * as if it was longer then the previous seed would have matched in the 
+             * as if it was longer then the previous seed would have matched in the
              * reverse_fm_index lookup.
-             */ 
+             */
             if forwards_extension.len() > 0 {
                 let forwards_seed = &read[seed_start_index..seed_end_index];
 
@@ -132,17 +137,17 @@ impl ReadMapper {
 
                     /*
                      * If we already have the length of a reverse match from the same seed extract it
-                     * 
+                     *
                      *       <--forwards_extension_length--|-----reverse_match_length------>
                      *       <-----forwards_extension------|--seed--|--reverse_extension--->
                      * ------|-----------------------------|--------|----------------------|------
                      *       ^                             ^
                      *    genome_pos              forwards_genome_pos
-                     * 
-                     * Should always be something here since the reverse lookup should populate it 
-                     * with at least the length of the seed. Hence, we do `unwrap` to panic if 
+                     *
+                     * Should always be something here since the reverse lookup should populate it
+                     * with at least the length of the seed. Hence, we do `unwrap` to panic if
                      * something has gone wrong
-                     */ 
+                     */
                     let reverse_match_length =
                         match_length_map.remove(&forwards_genome_pos).unwrap();
 
@@ -153,9 +158,16 @@ impl ReadMapper {
             }
 
             // Return longest match
-            return match_length_map
+            let longest_match = match_length_map
                 .into_iter()
-                .max_by_key(|(_, length_ref)| *length_ref);
+                .max_by_key(|(_, length_ref)| *length_ref)
+                .unwrap();
+
+            return Some(MapReadResult {
+                genome_position: longest_match.0,
+                match_length: longest_match.1,
+                seed_attempt: seed_attempt,
+            });
         }
 
         // None of the seeds could be found
@@ -170,20 +182,38 @@ mod tests {
     #[test]
     fn map_read() {
         let read_mapper = ReadMapper::new("ATACTTTATCAAATGTAAAAGTATCTCCTTCGTTTACGTCTAATTTTT");
-        
+
         // |------| is used to highlight the matches between the reads and the genome
 
-        //                               |--|
-        assert_eq!(read_mapper.map_read("ATAC", 4, 1), Some((0, 4)));
+        assert_eq!(
+            //                    |--|
+            read_mapper.map_read("ATAC", 4, 1),
+            Some(MapReadResult {
+                genome_position: 0,
+                match_length: 4,
+                seed_attempt: 0
+            })
+        );
 
         assert_eq!(
             //                    |----------------|
             read_mapper.map_read("ATACTTTATCAAATGTAA", 5, 2),
-            Some((0, 18))
+            Some(MapReadResult {
+                genome_position: 0,
+                match_length: 18,
+                seed_attempt: 0
+            })
         );
 
-        //                               |------------|
-        assert_eq!(read_mapper.map_read("ATCAAATGTAAAAG", 7, 2), Some((7, 14)));
+        assert_eq!(
+            //                    |------------|
+            read_mapper.map_read("ATCAAATGTAAAAG", 7, 2),
+            Some(MapReadResult {
+                genome_position: 7,
+                match_length: 14,
+                seed_attempt: 0
+            })
+        );
 
         assert_eq!(read_mapper.map_read("ATCAATTGTAAAA", 7, 2), None);
 
@@ -192,25 +222,41 @@ mod tests {
         assert_eq!(
             //                     |---------------|
             read_mapper.map_read("TTACTTTATCAAATGTAA", 5, 2),
-            Some((1, 17))
+            Some(MapReadResult {
+                genome_position: 1,
+                match_length: 17,
+                seed_attempt: 1
+            })
         );
-        
+
         assert_eq!(
             //                      |--------------|
             read_mapper.map_read("AAACTTTATCAAATGTAA", 5, 2),
-            Some((2, 16))
+            Some(MapReadResult {
+                genome_position: 2,
+                match_length: 16,
+                seed_attempt: 1
+            })
         );
 
         assert_eq!(
             //                              |--------------|
             read_mapper.map_read("GTATCTTCTACGTTTACGTCTAATTT", 7, 3),
-            Some((30, 16))
+            Some(MapReadResult {
+                genome_position: 30,
+                match_length: 16,
+                seed_attempt: 2
+            })
         );
 
         assert_eq!(
             //                              |-----------|
             read_mapper.map_read("GTATCTTCTACGTTTACGTCTAAATT", 7, 3),
-            Some((30, 13))
+            Some(MapReadResult {
+                genome_position: 30,
+                match_length: 13,
+                seed_attempt: 2
+            })
         );
     }
 
