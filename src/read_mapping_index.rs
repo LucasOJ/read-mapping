@@ -14,13 +14,13 @@ pub struct MapReadResult {
 }
 
 #[derive(Encode, Decode)]
-pub struct ReadMapper {
+pub struct ReadMappingIndex {
     forwards_fm_index: FMIndex,
     reverse_fm_index: FMIndex,
     genome_length: usize,
 }
 
-impl ReadMapper {
+impl ReadMappingIndex {
     pub fn new(genome: &str) -> Self {
         // TODO: Not nice having to reallocate `str` just to add the sentinel
         let mut forwards_genome = String::from(genome);
@@ -33,7 +33,7 @@ impl ReadMapper {
 
         let reverse_fm_index = FMIndex::new(&reversed_genome, 128, 128);
 
-        return ReadMapper {
+        return ReadMappingIndex {
             forwards_fm_index,
             reverse_fm_index,
             genome_length: genome.len() + 1, // +1 for sentinel
@@ -181,13 +181,14 @@ mod tests {
 
     #[test]
     fn map_read() {
-        let read_mapper = ReadMapper::new("ATACTTTATCAAATGTAAAAGTATCTCCTTCGTTTACGTCTAATTTTT");
+        let read_mapping_index =
+            ReadMappingIndex::new("ATACTTTATCAAATGTAAAAGTATCTCCTTCGTTTACGTCTAATTTTT");
 
         // |------| is used to highlight the matches between the reads and the genome
 
         assert_eq!(
-            //                    |--|
-            read_mapper.map_read("ATAC", 4, 1),
+            //                           |--|
+            read_mapping_index.map_read("ATAC", 4, 1),
             Some(MapReadResult {
                 genome_position: 0,
                 match_length: 4,
@@ -196,8 +197,8 @@ mod tests {
         );
 
         assert_eq!(
-            //                    |----------------|
-            read_mapper.map_read("ATACTTTATCAAATGTAA", 5, 2),
+            //                           |----------------|
+            read_mapping_index.map_read("ATACTTTATCAAATGTAA", 5, 2),
             Some(MapReadResult {
                 genome_position: 0,
                 match_length: 18,
@@ -206,8 +207,8 @@ mod tests {
         );
 
         assert_eq!(
-            //                    |------------|
-            read_mapper.map_read("ATCAAATGTAAAAG", 7, 2),
+            //                           |------------|
+            read_mapping_index.map_read("ATCAAATGTAAAAG", 7, 2),
             Some(MapReadResult {
                 genome_position: 7,
                 match_length: 14,
@@ -215,13 +216,13 @@ mod tests {
             })
         );
 
-        assert_eq!(read_mapper.map_read("ATCAATTGTAAAA", 7, 2), None);
+        assert_eq!(read_mapping_index.map_read("ATCAATTGTAAAA", 7, 2), None);
 
-        assert_eq!(read_mapper.map_read("ATCCAATGTAAAAG", 4, 1), None);
+        assert_eq!(read_mapping_index.map_read("ATCCAATGTAAAAG", 4, 1), None);
 
         assert_eq!(
-            //                     |---------------|
-            read_mapper.map_read("TTACTTTATCAAATGTAA", 5, 2),
+            //                            |---------------|
+            read_mapping_index.map_read("TTACTTTATCAAATGTAA", 5, 2),
             Some(MapReadResult {
                 genome_position: 1,
                 match_length: 17,
@@ -230,8 +231,8 @@ mod tests {
         );
 
         assert_eq!(
-            //                      |--------------|
-            read_mapper.map_read("AAACTTTATCAAATGTAA", 5, 2),
+            //                             |--------------|
+            read_mapping_index.map_read("AAACTTTATCAAATGTAA", 5, 2),
             Some(MapReadResult {
                 genome_position: 2,
                 match_length: 16,
@@ -240,8 +241,8 @@ mod tests {
         );
 
         assert_eq!(
-            //                              |--------------|
-            read_mapper.map_read("GTATCTTCTACGTTTACGTCTAATTT", 7, 3),
+            //                                     |--------------|
+            read_mapping_index.map_read("GTATCTTCTACGTTTACGTCTAATTT", 7, 3),
             Some(MapReadResult {
                 genome_position: 30,
                 match_length: 16,
@@ -250,8 +251,8 @@ mod tests {
         );
 
         assert_eq!(
-            //                              |-----------|
-            read_mapper.map_read("GTATCTTCTACGTTTACGTCTAAATT", 7, 3),
+            //                                     |-----------|
+            read_mapping_index.map_read("GTATCTTCTACGTTTACGTCTAAATT", 7, 3),
             Some(MapReadResult {
                 genome_position: 30,
                 match_length: 13,
@@ -263,7 +264,8 @@ mod tests {
     #[test]
     #[should_panic]
     fn map_read_panics_on_invalid_params() {
-        let read_mapper = ReadMapper::new("ATACTTTATCAAATGTAAAAGTATCTCCTTCGTTTACGTCTAATTTTT");
-        read_mapper.map_read("ATAC", 5, 4);
+        let read_mapping_index =
+            ReadMappingIndex::new("ATACTTTATCAAATGTAAAAGTATCTCCTTCGTTTACGTCTAATTTTT");
+        read_mapping_index.map_read("ATAC", 5, 4);
     }
 }

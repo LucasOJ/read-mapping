@@ -2,7 +2,7 @@ mod fasta_parsing;
 mod fastq_parsing;
 mod fm_index;
 mod nucleotide_stratified;
-mod read_mapping;
+mod read_mapping_index;
 mod run_length_encoding;
 
 use core::iter::Iterator;
@@ -11,7 +11,7 @@ use std::env;
 use fasta_parsing::read_fasta;
 use fastq_parsing::read_fastq;
 
-use read_mapping::{MapReadResult, ReadMapper};
+use read_mapping_index::{MapReadResult, ReadMappingIndex};
 
 fn main() {
     env::set_var("RUST_BACKTRACE", "1");
@@ -19,20 +19,20 @@ fn main() {
     let genome =
         read_fasta("data/ncbi_dataset/data/GCF_000011505.1/GCF_000011505.1_ASM1150v1_genomic.fna");
 
-    let read_mapper = ReadMapper::new(&genome);
+    let read_mapping_index = ReadMappingIndex::new(&genome);
 
-    // read_mapper.to_file("MRSAIndex.bin");
-    // let read_mapper = ReadMapper::from_file("MRSAIndex.bin");
+    // read_mapping_index.to_file("MRSAIndex.bin");
+    // let read_mapping_index = ReadMappingIndex::from_file("MRSAIndex.bin");
 
     println!("Mapping Reads");
 
-    let num_of_reads = 10000;
+    let num_of_reads = 1000000;
 
     let reads = read_fastq("data/SRR11998244.fastq");
 
     let read_results = reads
         .take(num_of_reads)
-        .map(|read| read_mapper.map_read(&read, 25, 3));
+        .map(|read| read_mapping_index.map_read(&read, 25, 3));
 
     let mut seed_attempt_map = [0, 0, 0];
     for read_result in read_results {
